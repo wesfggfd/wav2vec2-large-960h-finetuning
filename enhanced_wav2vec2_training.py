@@ -869,8 +869,8 @@ def create_test_dataloaders(processor, hyperparams, rank, world_size):
     
     return test_dataloaders
 
-def evaluate_model(model, dataloader, processor, device, rank, save_predictions=False, dataset_name="eval"):
-    """增强的模型评估"""
+def evaluate_model(model, dataloader, processor, device, rank, save_predictions=False, dataset_name="eval", save_dir=None):
+    """增强的模型评估 - 修复版"""
     model.eval()
     all_predictions = []
     all_references = []
@@ -919,8 +919,10 @@ def evaluate_model(model, dataloader, processor, device, rank, save_predictions=
     cer_score = cer(all_references, all_predictions)
     
     # 保存预测结果
-    if save_predictions and is_main_process(rank):
-        predictions_file = os.path.join(hyperparameters['save_dir'], f'predictions_{dataset_name}.json')
+    if save_predictions and is_main_process(rank) and save_dir:
+        # 确保目录存在
+        os.makedirs(save_dir, exist_ok=True)
+        predictions_file = os.path.join(save_dir, f'predictions_{dataset_name}.json')
         predictions_data = {
             'predictions': all_predictions,
             'references': all_references,
@@ -1155,13 +1157,14 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_wer, checkpoint_pat
     print(f"检查点已保存: {checkpoint_path}")
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None, scaler=None):
-    """增强的检查点加载"""
+    """增强的检查点加载 - 修复版"""
     if not os.path.exists(checkpoint_path):
         print(f"检查点文件不存在: {checkpoint_path}")
         return 0, float('inf'), None, None
     
     try:
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        # 修复：添加 weights_only=False 以兼容 PyTorch 2.6
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         # 加载模型状态
         if hasattr(model, 'module'):
@@ -1280,7 +1283,7 @@ def load_model_and_processor(rank=0):
     return model, processor, loaded_from
 
 def final_test_evaluation(model, processor, hyperparams, rank, world_size, device):
-    """最终测试集评估"""
+    """最终测试集评估 - 修复版"""
     if not hyperparams.get('final_test_evaluation', False):
         return
     
@@ -1303,6 +1306,7 @@ def final_test_evaluation(model, processor, hyperparams, rank, world_size, devic
         if is_main_process(rank):
             print(f"\n📊 评估测试集: {test_name}")
         
+        # 修复：传递 save_dir 参数
         test_loss, test_wer, test_cer, predictions, references = evaluate_model(
             model.module if hasattr(model, 'module') else model,
             test_dataloader, 
@@ -1310,7 +1314,8 @@ def final_test_evaluation(model, processor, hyperparams, rank, world_size, devic
             device, 
             rank,
             save_predictions=hyperparams.get('save_predictions', False),
-            dataset_name=test_name
+            dataset_name=test_name,
+            save_dir=hyperparams['save_dir']  # 添加这个参数
         )
         
         test_results[test_name] = {
@@ -1329,6 +1334,8 @@ def final_test_evaluation(model, processor, hyperparams, rank, world_size, devic
     
     # 保存测试结果
     if is_main_process(rank):
+        # 确保目录存在
+        os.makedirs(hyperparams['save_dir'], exist_ok=True)
         results_file = os.path.join(hyperparams['save_dir'], 'final_test_results.json')
         with open(results_file, 'w') as f:
             json.dump(test_results, f, indent=2)
@@ -1521,9 +1528,11 @@ def train_model(rank, world_size, hyperparams, master_port):
                 if is_main_process(rank):
                     print("📊 开始验证...")
                 
+                # 修复：传递 save_dir 参数
                 val_loss, val_wer, val_cer, _, _ = evaluate_model(
                     model.module, val_dataloader, processor, device, rank,
-                    save_predictions=False, dataset_name="dev"
+                    save_predictions=False, dataset_name="dev",
+                    save_dir=hyperparams['save_dir']  # 添加这个参数
                 )
                 
                 if is_main_process(rank):
@@ -1650,6 +1659,29 @@ def train_model(rank, world_size, hyperparams, master_port):
         if is_main_process(rank):
             print(f"GPU {rank}: 🧹 资源清理完成")
 
+def run_test_only(model_path="/root/fssd/ASR_task/.cache/wav2vec2_anti_explosion_20250724_041341/best_finetuned_model"):
+    """仅运行测试评估的独立函数"""
+    # 设置简单配置
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    rank = 0
+    world_size = 1
+    
+    # 加载已训练的模型
+    print(f"🔄 加载模型: {model_path}")
+    model = Wav2Vec2ForCTC.from_pretrained(model_path)
+    processor = Wav2Vec2Processor.from_pretrained(model_path)
+    model.to(device)
+    model.eval()
+    
+    # 使用原始超参数的副本，但修改save_dir
+    test_hyperparams = hyperparameters.copy()
+    test_hyperparams['save_dir'] = os.path.dirname(model_path)
+    
+    # 运行测试评估
+    final_test_evaluation(model, processor, test_hyperparams, rank, world_size, device)
+    
+    print("✅ 测试评估完成!")
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='Wav2Vec2 防梯度爆炸优化版分布式训练')
@@ -1665,8 +1697,15 @@ def main():
     parser.add_argument('--disable_gradient_monitoring', action='store_true', help='禁用梯度监控')
     parser.add_argument('--disable_focal_loss', action='store_true', help='禁用focal loss')
     parser.add_argument('--enable_gradient_checkpointing', action='store_true', help='启用梯度检查点')
+    parser.add_argument('--test_only', action='store_true', help='仅运行测试评估')
+    parser.add_argument('--model_path', type=str, default="/root/fssd/ASR_task/.cache/wav2vec2_anti_explosion_20250724_041341/best_finetuned_model", help='测试模型路径')
     
     args = parser.parse_args()
+    
+    # 如果是仅测试模式
+    if args.test_only:
+        run_test_only(args.model_path)
+        return
     
     # 加载配置
     hyperparams = hyperparameters.copy()
@@ -1804,9 +1843,9 @@ if __name__ == "__main__":
     print("="*80)
     print("可用操作:")
     print("  1. 开始训练: python enhanced_wav2vec2_training.py")
-    print("  2. 查看训练进度: 在脚本中调用 show_training_progress(save_dir)")
-    print("  3. 模型推理: 在脚本中调用 inference_example()")
-    print("  4. 测试集评估: 在脚本中调用 evaluate_on_test_set()")
+    print("  2. 仅运行测试: python enhanced_wav2vec2_training.py --test_only")
+    print("  3. 指定模型路径测试: python enhanced_wav2vec2_training.py --test_only --model_path /path/to/model")
+    print("  4. 从检查点恢复: python enhanced_wav2vec2_training.py --resume_from_checkpoint /path/to/checkpoint")
     print("="*80)
     
     # 执行主训练流程
