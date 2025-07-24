@@ -20,7 +20,7 @@ you can finetuned baseline  on  train-clean-100, and best_finetuned_model(it gen
 ```
 
 ```
-you can finetuned best_finetuned_model on train-clean-100 + train-clean-360, and new best_finetuned_model(it generates automatically) is the best model, which performed wer 0.0317 on VAL SET and 0.0317 on TEST SET
+you can finetuned best_finetuned_model on train-clean-100 + train-clean-360, and new best_finetuned_model(it generates automatically) is the best model, which performed wer 0.0317 on VAL SET and 0.0306 on TEST SET
 ```
 
 **models** I have not uploaded my finetuned models and basic pretrained model wav2vec2-large-960h to this repo, so you can just run my code that can download and keep the models to the default path automatically
