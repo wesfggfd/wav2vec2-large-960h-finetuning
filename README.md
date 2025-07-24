@@ -19,6 +19,32 @@ Datasets please check [OpenSLR](https://www.openslr.org/12/), including train-cl
 you can finetuned /root/fssd/ASR_task/.cache/wav2vec2_finetuned_20250721_015618/best_finetuned_model  on  train-clean-100, and /root/fssd/ASR_task/.cache/wav2vec2_training_20250723_032500/best_finetuned_model is the best model, which performed wer 0.0346 on VAL SET
 ```
 
+```
+you can finetuned /root/fssd/ASR_task/.cache/wav2vec2_training_20250723_032500/best_finetuned_model on train-clean-100 + train-clean-360, and /root/fssd/ASR_task/.cache/wav2vec2_anti_explosion_20250724_041341/best_finetuned_model is the best model, which performed wer 0.0317 on VAL SET and 0.0317 on TEST SET
+```
+
 **models** I have not uploaded my finetuned models and basic pretrained model wav2vec2-large-960h to this repo, so you can go to my huggingface repo ```wesfggfd/wav2vec2-large-960h-finetuning-best-model```
 
 **performance** after a series of technical finetuning, it got WER 0.0346 ON DEV SET
+
+```
+1. 前向传播 → 计算损失
+2. 检查损失是否异常 → 异常则跳过
+3. 反向传播 → 计算梯度
+4. 清理异常梯度值 (NaN, Inf)
+5. 计算梯度范数
+6. 检测是否梯度爆炸
+   ├─ 是 → 跳过更新 + 降低学习率
+   └─ 否 → 继续处理
+7. 梯度裁剪 (固定或自适应)
+8. 优化器更新
+9. 清零梯度
+```
+
+**大了就裁剪，爆了就跳过，动态调整学习率**
+```
+检测 → 裁剪 → 跳过 → 衰减
+ ↓      ↓      ↓      ↓
+监控   限制   避免   调整
+异常   幅度   更新   速率
+```
