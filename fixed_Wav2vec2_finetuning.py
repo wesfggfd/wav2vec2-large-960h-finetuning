@@ -68,6 +68,35 @@ hyperparameters = {
     'max_target_length': 512,   # 增加最大标签长度
 }
 
+def freeze_wav2vec2_layers(model):
+    """冻结Wav2Vec2模型的所有层，除了最后的线性层（lm_head）"""
+    # 首先冻结所有参数
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # 只解冻lm_head
+    for param in model.lm_head.parameters():
+        param.requires_grad = True
+    
+    # 打印冻结信息
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = total_params - trainable_params
+    
+    print(f"\n模型参数冻结情况:")
+    print(f"总参数数量: {total_params:,}")
+    print(f"可训练参数数量: {trainable_params:,}")
+    print(f"冻结参数数量: {frozen_params:,}")
+    print(f"可训练参数比例: {trainable_params/total_params*100:.2f}%")
+    
+    # 验证只有lm_head是可训练的
+    print("\n可训练的层:")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"  - {name}: {param.shape}")
+    
+    return model
+
 class LibriSpeechDataset(Dataset):
     """优化后的LibriSpeech数据集类"""
     
